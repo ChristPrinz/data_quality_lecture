@@ -1,0 +1,400 @@
+---
+title: "Data Quality"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  word_document: default
+---
+
+# SET UP
+## Clear workspace
+Starten Sie wie beim letzten Mal: Löschen Sie die alte Umgebung und starten Sie mit einer neuen Analyse
+```{r}
+rm(list=ls())
+```
+
+## Installieren von Packages
+Falls Sie die in diesem Notebook benötigten Packages noch nicht haben (und nur dann), werden diese von CRAN noch nachinstalliert.
+```{r}
+if (!require("ggplot2")) install.packages("ggplot2")
+if (!require("dplyr")) install.packages("dplyr") 
+if (!require("export")) install.packages("export") 
+if (!require("GGally")) install.packages("GGally") 
+if (!require("ICEbox")) install.packages("ICEbox")
+if (!require("randomForest")) install.packages("randomForest")
+if (!require("pdp")) install.packages("pdp")
+if (!require("partykit")) install.packages("partykit")
+if (!require("caret")) install.packages("caret")
+if (!require("kernelshap")) install.packages("kernelshap")
+if (!require("shapviz")) install.packages("shapviz")
+if (!require("caTools")) install.packages("caTools")
+if (!require("magrittr")) install.packages("magrittr")
+if (!require("coefplot")) install.packages("coefplot")
+if (!require("ALEPlot")) install.packages("AlEplot")
+if (!require("iml")) install.packages("iml")
+if (!require("glmnet")) install.packages("glmnet")
+if (!require("mice")) install.packages("mice")
+if (!require("lime")) install.packages("lime")
+```
+
+
+
+## Load libraries
+Laden Sie Libraries, die für diese Auswertung nötig sind.
+Falls doch noch eines fehlt: if (!require("ggplot2")) install.packages("ggplot2")
+```{r}
+library(ggplot2)
+library(readxl)
+library(reshape2)
+library(GGally)
+library(dplyr)
+library(glmnet)
+library(caret)
+```
+
+# Data Quality
+## Untersuchung fehlender Werte im Airquality Datensatz
+```{r}
+data("airquality")
+data <- airquality
+str(data)
+```
+```{r}
+summary(data)
+```
+
+## Installation und laden von skimr und Analyse des airquality Datensatzes
+Schauen Sie sich die resultierenden 3 Ergebnisfenster unter dem Code an.
+```{r}
+if (!require("skimr")) install.packages("skimr")
+library(skimr)
+skimdata <- data %>% skim() %>% tibble::as_tibble()
+print(skimdata)
+```
+
+## Visualisierung fehlender Werte und des Musters
+```{r}
+if (!require("VIM")) install.packages("VIM")
+library(VIM)
+aggr_plot <- aggr(data, col=c('navyblue','red'), numbers=TRUE, sortVars=TRUE, labels=names(data), cex.axis=.7, gap=3, ylab=c("Histogram of missing data","Pattern"))
+```
+
+
+## Entfernung von Month und Day für einfachere Visualisierung
+```{r}
+data <- data[-c(5,6)]
+summary(data)
+```
+
+
+
+## Untersuchung des Anteils fehlender Werte am Datensatz
+Angaben in % unter den Variablennamen
+```{r}
+pMiss <- function(x){sum(is.na(x))/length(x)*100}
+apply(data,2,pMiss)
+```
+## Modell-basierte Imputation und multiple Regression
+```{r}
+library(mice)
+tempData <- mice(data,m=5,maxit=50,meth='pmm',seed=500)
+```
+
+### Untersuchung der Verteilung von originalen und imputierten Daten
+```{r}
+xyplot(tempData,Ozone ~ Wind+Temp+Solar.R,pch=18,cex=1)
+```
+### Dichteverteilung originaler und imputierter Daten
+```{r}
+densityplot(tempData)
+```
+### Stripplot originaler und imputierter Daten
+```{r}
+stripplot(tempData, pch = 20, cex = 1.2)
+```
+
+
+
+```{r}
+completedData <- complete(tempData,1)
+```
+
+```{r}
+completedData %>% skim() %>% tibble::as_tibble()
+```
+
+#################################################################
+#################################################################
+
+# Erklärbarkeit und Interpretierbarkeit
+## Daten laden und vorbereiten
+Sie können die Daten aus dem Internet herunterladen, importieren und einem Preprocessing unterziehen. Wochentage, Arbeitstage, Datum und Wetterbedingungen sind folglich als passende Formate (Datum, Faktoren...) kodiert.
+```{r}
+library(dplyr)
+bikesharing <- read.csv("https://raw.githubusercontent.com/christophM/interpretable-ml-book/master/data/bike-sharing-daily.csv")
+bikesharing <- bikesharing %>%
+  mutate(
+    weekday_fct = factor(x = weekday,
+             levels = c(0,1,2,3,4,5,6),
+             labels = c("Sunday",
+                       "Monday",
+                       "Tuesday",
+                       "Wednesday",
+                       "Thursday",
+                       "Friday",
+                       "Saturday")))
+bikesharing <- bikesharing %>%
+    mutate(weathersit_fct = factor(x = weathersit,
+              levels = c(1, 2, 3),
+              labels = c("Good",
+                       "Clouds/Mist",
+                       "Rain/Snow/Storm")))
+bikesharing <- bikesharing %>%
+    mutate(season_fct = factor(x = season,
+              levels = c(1, 2, 3, 4),
+              labels = c("Spring",
+                       "Summer",
+                       "Fall",
+                       "Winter")))
+bikesharing$workingday <- as.factor(bikesharing$workingday)
+bikesharing$weekday <- as.factor(bikesharing$weekday)
+bikesharing$dteday <- as.Date(bikesharing$dteday)
+bikesharing$weekday_fct <- as.character(bikesharing$weekday_fct)
+```
+
+## Explorative Datenanalyse
+### Übersicht über den Datensatz
+Sehen Sie sich die ersten sechs Zeilen des Datensatzes an.
+```{r}
+head(bikesharing)
+```
+
+### Struktur
+Sehen Sie sich Struktur und Aufbau des Datensatzes an
+```{r}
+str(bikesharing)
+```
+
+### Statistische Zusammenfassung
+Erhalten Sie für jede Variable eine Zusammenfassung in Form deskriptiver Statistik
+```{r}
+summary(bikesharing)
+```
+
+### Pairs-Plot zur visuellen Übersicht
+Plotten Sie alle Variablen gegeneinander, um Verteilungen und Zusammenhänge bereits jetzt zu verstehen
+```{r fig.height = 10, fig.width = 10, fig.align = "center", warning=FALSE,message=FALSE}
+library(GGally)
+GGally::ggpairs(bikesharing[-c(2,17,18,19)]) 
+```
+Plotten Sie die Ausleihen gegen die Zeit, um den Verlauf genauer analysieren zu können.
+```{r}
+ggplot(filter(bikesharing,yr==1), mapping=aes(x=dteday,y=cnt)) +
+  geom_point()+
+  labs(title="Bikesharing over the year 2012",x="",y="Count (abs)")
+```
+
+## Implementierung von Modellen
+### Lineares univariates Modell
+```{r}
+ggplot(bikesharing, mapping=aes(x=temp,y=cnt)) +
+  geom_point()+
+  geom_smooth(method="lm",col="#DF4807")+
+  labs(title="Bike Rentals",x="Temperature (norm.)",y="Count (abs)")
+```
+
+### 10 fache Cross Validation
+```{r}
+library(caret)
+library(randomForest)
+trainControl <- trainControl(method="repeatedcv", number=10, repeats=3)
+metric <- c("RMSE")
+```
+
+### Lineares multivariates Modell
+```{r}
+set.seed(7)
+fit.lm <- train(cnt ~ temp + hum + windspeed + factor(weekday_fct) + holiday,data=bikesharing, method="lm",metric=metric, preProc=c("center",
+"scale"), trControl=trainControl)
+```
+
+#### Coefficient Plot
+```{r}
+library(coefplot)
+coefplot(fit.lm, col="#DF4807",intercept=F) +
+  labs(title="Multivariate Linear Model Bike Rentals")
+```
+
+### Decision Tree
+#### Data splitting
+```{r}
+library(datasets)
+library(caTools)
+library(dplyr)
+library(magrittr)
+sample_data = sample.split(bikesharing, SplitRatio = 0.8)
+train_data <- subset(bikesharing, sample_data == TRUE)
+test_data <- subset(bikesharing, sample_data == FALSE)
+```
+
+#### Entscheidungsbaum mit ctree und Visualisierung
+```{r}
+library(partykit)
+model<- ctree(cnt ~ instant + temp, data=train_data)
+plot(model,gp = gpar(fontsize = 8))
+```
+
+### RF
+```{r}
+bikesharing_train <- bikesharing
+set.seed(7)
+fit.rf <- train(cnt ~ temp + workingday + hum + windspeed + weekday, data=bikesharing_train, method="rf", metric=metric, preProc=c("center",
+"scale"), trControl=trainControl)
+```
+
+## XAI Methoden
+### PDP
+```{r}
+library(pdp)
+pdp <- partial(fit.rf, pred.var = c("temp"), plot = TRUE, plot.engine = "ggplot2") + labs(x="Temperature", y="Predicted counts RF",title="PDP")
+print(pdp)
+```
+
+### ICE
+#### ICE Model
+```{r}
+library(ICEbox)
+library(randomForest)
+library(dplyr)
+bikesharing_ICE <- bikesharing %>% select(cnt,temp,workingday,hum,windspeed,weekday)
+X <- bikesharing_ICE
+y <- X$cnt
+X$cnt = NULL
+bhd_rf_mod <- randomForest::randomForest(X, y)
+bhd.ice = ice(object = bhd_rf_mod, X = X, y = y, predictor = "temp",
+            frac_to_build = .1) 
+```
+#### ICE plot im Stil von ggplot
+```{r}
+plot(bhd.ice, x_quantile = FALSE, plot_pdp = TRUE, frac_to_plot = 1,main="ICE plot",ylab="Predicted Counts",xlab="Temperature",bty = "n", xaxt = "n", yaxt = "n") 
+box("plot",
+    bty = "l",
+    lwd = 2)
+axis(side = 1,
+     lwd = 0,
+     lwd.ticks = 2)
+axis(side = 2, lwd = 0, lwd.ticks = 2,
+     las = 2)
+```
+
+### ALE plot
+```{r}
+library(ALEPlot)
+library(iml)
+data <- data.frame(cnt = bikesharing$cnt,
+                   weekday = as.factor(bikesharing$weekday),
+                   temp = bikesharing$temp)
+rfm <- randomForest(cnt ~., data = data)
+low_predictor <- Predictor$new(rfm, data = data)
+plot(FeatureEffect$new(low_predictor, feature = "temp", method = "ale")) + labs(x="Temperature", y="Predicted counts RF ",title="ALE Plot")
+```
+
+### SHAP
+See: https://stackoverflow.com/questions/77025093/how-to-get-shap-values-for-caret-models-in-r
+
+```{r}
+library(caret)
+library(kernelshap)
+library(shapviz)
+bikesharing_train.shap <- bikesharing %>% select(cnt, temp,workingday,hum,windspeed,weekday)
+fit.rf.shap <- train(cnt ~ temp + workingday + hum + windspeed + weekday, data=bikesharing_train.shap, method="rf", metric=metric, preProc=c("center",
+"scale"), trControl=trainControl(method = "oob"))
+s <- kernelshap(fit.rf.shap, X = bikesharing_train.shap[, -1], bg_X = bikesharing_train.shap) 
+sv <- shapviz(s)
+```
+#### SHAP Importance
+https://cran.r-project.org/web/packages/shapviz/vignettes/basic_use.html
+```{r}
+sv_importance(sv) 
+```
+
+
+#### SHAP Bee plot importance
+```{r}
+sv_importance(sv, kind = "bee") 
+```
+
+#### SHAP Dependence
+```{r}
+sv_dependence(sv, v = colnames(bikesharing_train.shap[, -1]))
+
+```
+#### Shap Waterfall
+```{r}
+sv_waterfall(sv, row_id = 1) 
+
+```
+#### Shap Force
+```{r}
+sv_force(sv, row_id = 1) 
+```
+# LIME
+```{r}
+library(caret)
+library(lime)
+
+# Split up the data set
+iris_test <- iris[1:5, 1:4]
+iris_train <- iris[-(1:5), 1:4]
+iris_lab <- iris[[5]][-(1:5)]
+
+# Create Random Forest model on iris data
+model <- train(iris_train, iris_lab, method = 'rf')
+
+# Create an explainer object
+explainer <- lime(iris_train, model)
+
+# Explain new observation
+explanation <- explain(iris_test, explainer, n_labels = 1, n_features = 2)
+
+# The output is provided in a consistent tabular format and includes the
+# output from the model.
+explanation
+```
+```{r}
+# And can be visualised directly
+plot_features(explanation)
+```
+
+https://lime.data-imaginist.com
+```{r}
+library(caret)
+library(lime)
+
+# Split up the data set
+bikesharing_train.shap_test <- bikesharing_train.shap[1:5, 1:4]
+bikesharing_train.shap_train <- bikesharing_train.shap[-(1:5), 1:4]
+bikesharing_train.shap_lab <- bikesharing_train.shap[[5]][-(1:5)]
+
+
+
+# Create Random Forest model on iris data
+model <- train(bikesharing_train.shap_train, bikesharing_train.shap_lab, method = 'rf')
+
+# Create an explainer object
+explainer <- lime(bikesharing_train.shap_train, model)
+
+# Explain new observation
+explanation <- explain(bikesharing_train.shap_test, explainer, n_labels = 1, n_features = 2)
+
+# The output is provided in a consistent tabular format and includes the
+# output from the model.
+explanation
+```
+
+
+```{r}
+print("You are done with this script!")
+```
+
